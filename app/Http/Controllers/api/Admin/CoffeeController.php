@@ -7,6 +7,7 @@ use App\Http\Resources\CoffeeResource;
 use App\Models\Coffee;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class CoffeeController extends Controller
 {
@@ -26,14 +27,13 @@ class CoffeeController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'category' => ['required', 'string', 'max:255'],
-            'image' => ['nullable', 'string', 'max:255'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'available' => ['nullable', 'boolean'],
             'isNew' => ['nullable', 'boolean'],
             'description' => ['required', 'string'],
             'ingredients' => ['nullable', 'array'],
             'ingredients.*' => ['nullable', 'string', 'max:255'],
             'sizes' => ['required', 'array', 'min:1'],
-            'sizes.*.key' => ['nullable', 'string', 'max:50'],
             'sizes.*.label' => ['required', 'string', 'max:50'],
             'sizes.*.price' => ['required', 'numeric', 'min:0'],
         ]);
@@ -41,10 +41,17 @@ class CoffeeController extends Controller
         DB::beginTransaction();
 
         try {
+            $imagePath = '/images/espresso1.jpg';
+
+            if ($request->hasFile('image')) {
+                $path = $request->file('image')->store('coffees', 'public');
+                $imagePath = '/storage/' . $path;
+            }
+
             $coffee = Coffee::create([
                 'name' => $validated['name'],
                 'category' => $validated['category'],
-                'image' => $validated['image'] ?? null,
+                'image' => $imagePath,
                 'available' => $validated['available'] ?? true,
                 'is_new' => $validated['isNew'] ?? false,
                 'description' => $validated['description'],
@@ -62,7 +69,7 @@ class CoffeeController extends Controller
 
             foreach ($validated['sizes'] as $size) {
                 $coffee->sizes()->create([
-                    'key' => $size['key'] ?? $size['label'],
+                    'key' => $size['label'],
                     'label' => $size['label'],
                     'price' => $size['price'],
                 ]);
@@ -102,14 +109,13 @@ class CoffeeController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'category' => ['required', 'string', 'max:255'],
-            'image' => ['nullable', 'string', 'max:255'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'available' => ['nullable', 'boolean'],
             'isNew' => ['nullable', 'boolean'],
             'description' => ['required', 'string'],
             'ingredients' => ['nullable', 'array'],
             'ingredients.*' => ['nullable', 'string', 'max:255'],
             'sizes' => ['required', 'array', 'min:1'],
-            'sizes.*.key' => ['nullable', 'string', 'max:50'],
             'sizes.*.label' => ['required', 'string', 'max:50'],
             'sizes.*.price' => ['required', 'numeric', 'min:0'],
         ]);
@@ -117,10 +123,25 @@ class CoffeeController extends Controller
         DB::beginTransaction();
 
         try {
+            $imagePath = $coffee->image;
+
+            if ($request->hasFile('image')) {
+                if ($coffee->image && str_starts_with($coffee->image, '/storage/')) {
+                    $oldPath = str_replace('/storage/', '', $coffee->image);
+
+                    if (Storage::disk('public')->exists($oldPath)) {
+                        Storage::disk('public')->delete($oldPath);
+                    }
+                }
+
+                $path = $request->file('image')->store('coffees', 'public');
+                $imagePath = '/storage/' . $path;
+            }
+
             $coffee->update([
                 'name' => $validated['name'],
                 'category' => $validated['category'],
-                'image' => $validated['image'] ?? $coffee->image,
+                'image' => $imagePath,
                 'available' => $validated['available'] ?? $coffee->available,
                 'is_new' => $validated['isNew'] ?? $coffee->is_new,
                 'description' => $validated['description'],
@@ -140,7 +161,7 @@ class CoffeeController extends Controller
             $coffee->sizes()->delete();
             foreach ($validated['sizes'] as $size) {
                 $coffee->sizes()->create([
-                    'key' => $size['key'] ?? $size['label'],
+                    'key' => $size['label'],
                     'label' => $size['label'],
                     'price' => $size['price'],
                 ]);
@@ -171,6 +192,14 @@ class CoffeeController extends Controller
         DB::beginTransaction();
 
         try {
+            if ($coffee->image && str_starts_with($coffee->image, '/storage/')) {
+                $oldPath = str_replace('/storage/', '', $coffee->image);
+
+                if (Storage::disk('public')->exists($oldPath)) {
+                    Storage::disk('public')->delete($oldPath);
+                }
+            }
+
             $coffee->sizes()->delete();
             $coffee->ingredients()->delete();
             $coffee->delete();

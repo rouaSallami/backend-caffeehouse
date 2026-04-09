@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Addon;
 use App\Http\Resources\AddonResource;
+use Illuminate\Support\Facades\Storage;
 
 class AddonController extends Controller
 {
@@ -23,14 +24,21 @@ class AddonController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'price' => ['required', 'numeric', 'min:0'],
-            'image' => ['nullable', 'string', 'max:2048'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
             'available' => ['nullable', 'boolean'],
         ]);
+
+        $imagePath = '/images/cookie-maison1.jpg';
+
+        if ($request->hasFile('image')) {
+            $path = $request->file('image')->store('addons', 'public');
+            $imagePath = '/storage/' . $path;
+        }
 
         $addon = Addon::create([
             'name' => $validated['name'],
             'price' => $validated['price'],
-            'image' => $validated['image'] ?? '/images/cookie-maison1.jpg',
+            'image' => $imagePath,
             'available' => $validated['available'] ?? true,
         ]);
 
@@ -47,13 +55,28 @@ class AddonController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'price' => ['required', 'numeric', 'min:0'],
-            'image' => ['nullable', 'string', 'max:2048'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:2048'],
         ]);
+
+        $imagePath = $addon->image;
+
+        if ($request->hasFile('image')) {
+            if ($addon->image && str_starts_with($addon->image, '/storage/')) {
+                $oldPath = str_replace('/storage/', '', $addon->image);
+
+                if (Storage::disk('public')->exists($oldPath)) {
+                    Storage::disk('public')->delete($oldPath);
+                }
+            }
+
+            $path = $request->file('image')->store('addons', 'public');
+            $imagePath = '/storage/' . $path;
+        }
 
         $addon->update([
             'name' => $validated['name'],
             'price' => $validated['price'],
-            'image' => $validated['image'] ?? $addon->image,
+            'image' => $imagePath,
         ]);
 
         return response()->json(
@@ -64,6 +87,15 @@ class AddonController extends Controller
     public function destroy($id)
     {
         $addon = Addon::findOrFail($id);
+
+        if ($addon->image && str_starts_with($addon->image, '/storage/')) {
+            $oldPath = str_replace('/storage/', '', $addon->image);
+
+            if (Storage::disk('public')->exists($oldPath)) {
+                Storage::disk('public')->delete($oldPath);
+            }
+        }
+
         $addon->delete();
 
         return response()->json([
