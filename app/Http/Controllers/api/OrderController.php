@@ -17,7 +17,7 @@ class OrderController extends Controller
         $validated = $request->validate([
             
             'customer_name' => 'required|string|max:255',
-            'customer_phone' => 'required|string|max:30',
+            'customer_phone' => 'nullable|string|max:30',
             'mode' => 'required|string|max:50',
             'notes' => 'nullable|string',
             'items' => 'required|array|min:1',
@@ -103,28 +103,34 @@ public function updateStatus(Request $request, $id)
 {
     try {
         $validated = $request->validate([
-            'status' => 'required|in:pending,confirmed,preparing,ready,delivered,cancelled',
+            'status' => 'required|in:pending,confirmed,preparing,ready,out_for_delivery,delivered,cancelled',
         ]);
 
         $order = Order::with('items.coffee')->findOrFail($id);
 
-        $order->update([
-            'status' => $validated['status'],
-        ]);
+       $newStatus = $validated['status'];
+
+$finalStatuses = ['delivered', 'cancelled'];
+$isCompleted = in_array($newStatus, $finalStatuses, true);
+
+$order->update([
+    'status' => $newStatus,
+    'completed_at' => $isCompleted ? now() : null,
+    'is_archived' => $isCompleted,
+]);
 
         if (
-    $order->status === 'ready' ||
-    $order->status === 'Prête à être servie'
+    ($order->status === 'out_for_delivery' && $order->mode === 'livraison') ||
+    ($order->status === 'ready' && $order->mode === 'emporter')
 ) {
-            if ($order->status === 'ready') {
     \Log::info('Status is ready, sending SMS', [
         'order_id' => $order->id,
         'status' => $order->status,
+        'mode' => $order->mode,
     ]);
 
     $this->sendSmsNotification($order);
 }
-        }
 
         event(new OrderStatusUpdated($order));
 
@@ -201,15 +207,20 @@ private function sendSmsNotification($order)
         $phone = '+216' . ltrim($phone, '0');
     }
 
-    \Log::info('SMS normalized phone', [
-        'order_id' => $order->id,
-        'phone' => $phone,
-        'from' => env('TWILIO_FROM'),
-        'sid_exists' => !empty(env('TWILIO_SID')),
-        'token_exists' => !empty(env('TWILIO_TOKEN')),
-    ]);
+    $customerName = $order->customer_name ?: 'Client';
+    $mode = $order->mode ?: 'commande';
+    $total = number_format((float) $order->total_price, 2, '.', '');
+    $heure = now()->format('H:i');
 
-    $message = "CoffeeHouse: votre commande #{$order->id} est prete.";
+    // إذا تحب label أحسن للmode
+    $modeLabel = match ($mode) {
+        'livraison' => 'livraison',
+        'emporter' => 'a emporter',
+        'surplace' => 'sur place',
+        default => $mode,
+    };
+
+    $message = "CoffeeHouse: Bonjour {$customerName}, votre commande #{$order->id} ({$modeLabel}) est en livraison. Total: {$total} DT. Heure: {$heure}.";
 
     try {
         $client = new Client(env('TWILIO_SID'), env('TWILIO_TOKEN'));
@@ -229,5 +240,5 @@ private function sendSmsNotification($order)
             'message' => $e->getMessage(),
         ]);
     }
-}
+} 
 }
