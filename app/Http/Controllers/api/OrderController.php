@@ -169,6 +169,55 @@ public function show(Request $request, $id)
 
     return response()->json($order);
 }
+
+
+
+public function cancel(Request $request, $id)
+{
+    try {
+        $order = Order::findOrFail($id);
+
+        // لازم تكون commande متاع نفس الuser
+        if ($order->user_id !== $request->user()->id) {
+            return response()->json([
+                'message' => 'Accès interdit',
+            ], 403);
+        }
+
+        // ينجم يلغّي كان قبل confirmation
+        if ($order->status !== 'pending') {
+            return response()->json([
+                'message' => 'Cette commande ne peut plus être annulée',
+            ], 422);
+        }
+
+        $order->update([
+            'status' => 'cancelled',
+            'completed_at' => now(),
+            'is_archived' => true,
+        ]);
+
+        event(new OrderStatusUpdated($order));
+
+        return response()->json([
+            'message' => 'Commande annulée avec succès',
+            'order' => $order,
+        ], 200);
+    } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        return response()->json([
+            'message' => 'Commande introuvable',
+        ], 404);
+    } catch (\Throwable $e) {
+        return response()->json([
+            'message' => 'Erreur lors de l’annulation de la commande',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+}
+
+
+
+
 public function destroy(Request $request, $id)
 {
     $order = Order::findOrFail($id);

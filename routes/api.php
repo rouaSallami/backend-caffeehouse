@@ -50,6 +50,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/orders', [OrderController::class, 'store']);
     Route::get('/orders', [OrderController::class, 'index']);
     Route::get('/orders/{id}', [OrderController::class, 'show']);
+    Route::patch('/orders/{id}/cancel', [OrderController::class, 'cancel']);
 });
 
 
@@ -79,6 +80,7 @@ Route::middleware(['auth:sanctum', 'admin'])->prefix('admin')->group(function ()
     Route::get('/orders', [OrderController::class, 'index']);
     Route::patch('/orders/{id}/status', [OrderController::class, 'updateStatus']);
     Route::delete('/orders/{id}', [OrderController::class, 'destroy']);
+    
 
     // Users (Admin)
     Route::get('/users', [UserController::class, 'index']);
