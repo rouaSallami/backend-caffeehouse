@@ -13,86 +13,109 @@ use Twilio\Rest\Client;
 class OrderController extends Controller
 {
     public function store(Request $request)
-    {
-        $validated = $request->validate([
-            
-            'customer_name' => 'required|string|max:255',
-            'customer_phone' => 'nullable|string|max:30',
-            'mode' => 'required|string|max:50',
-            'notes' => 'nullable|string',
-            'items' => 'required|array|min:1',
-            'items.*.coffee_id' => 'required|exists:coffees,id',
-            'items.*.size_name' => 'required|string|max:50',
-            'items.*.unit_price' => 'required|numeric|min:0',
-            'items.*.quantity' => 'required|integer|min:1',
-            'items.*.sugar' => 'nullable|integer|min:0|max:100',
-'items.*.container' => 'nullable|string|max:50',
-'items.*.note' => 'nullable|string',
-'items.*.milk' => 'nullable|string|max:50',
-'items.*.addons' => 'nullable|array',
+{
+    $validated = $request->validate([
+        'customer_name' => 'required|string|max:255',
+        'customer_phone' => 'nullable|string|max:30',
+        'mode' => 'required|string|max:50',
+        'notes' => 'nullable|string',
+        'items' => 'required|array|min:1',
+        'items.*.coffee_id' => 'required|exists:coffees,id',
+        'items.*.size_name' => 'required|string|max:50',
+        'items.*.unit_price' => 'required|numeric|min:0',
+        'items.*.quantity' => 'required|integer|min:1',
+        'items.*.sugar' => 'nullable|integer|min:0|max:100',
+        'items.*.container' => 'nullable|string|max:50',
+        'items.*.note' => 'nullable|string',
+        'items.*.milk' => 'nullable|string|max:50',
+        'items.*.addons' => 'nullable|array',
+    ]);
+
+    DB::beginTransaction();
+
+    try {
+        $subtotalPrice = 0;
+
+        $order = Order::create([
+            'user_id' => $request->user()->id,
+            'customer_name' => $validated['customer_name'],
+            'customer_phone' => $validated['customer_phone'] ?? null,
+            'mode' => $request->input('mode'),
+            'notes' => $validated['notes'] ?? null,
+            'subtotal_price' => 0,
+            'discount_amount' => 0,
+            'applied_promo_code' => null,
+            'total_price' => 0,
+            'status' => 'pending',
         ]);
 
-        DB::beginTransaction();
+        foreach ($validated['items'] as $item) {
+            $subtotal = $item['unit_price'] * $item['quantity'];
+            $subtotalPrice += $subtotal;
 
-        try {
-            $totalPrice = 0;
-
-            $order = Order::create([
-    'user_id' => $request->user()->id,
-    'customer_name' => $validated['customer_name'],
-    'customer_phone' => $validated['customer_phone'] ?? null,
-    'mode' => $request->input('mode'),
-    'notes' => $validated['notes'] ?? null,
-    'total_price' => 0,
-    'status' => 'pending',
-]);
-
-            foreach ($validated['items'] as $item) {
-                $subtotal = $item['unit_price'] * $item['quantity'];
-                $totalPrice += $subtotal;
-
-                OrderItem::create([
-    'order_id' => $order->id,
-    'coffee_id' => $item['coffee_id'],
-    'size_name' => $item['size_name'],
-    'sugar' => $item['sugar'] ?? 0,
-    'container' => $item['container'] ?? null,
-    'milk' => $item['milk'] ?? null, 
-    'note' => $item['note'] ?? null,
-    'addons' => $item['addons'] ?? [],
-    'unit_price' => $item['unit_price'],
-    'quantity' => $item['quantity'],
-    'subtotal' => $subtotal,
-]);
-            }
-
-            $order->update([
-                'total_price' => $totalPrice,
+            OrderItem::create([
+                'order_id' => $order->id,
+                'coffee_id' => $item['coffee_id'],
+                'size_name' => $item['size_name'],
+                'sugar' => $item['sugar'] ?? 0,
+                'container' => $item['container'] ?? null,
+                'milk' => $item['milk'] ?? null,
+                'note' => $item['note'] ?? null,
+                'addons' => $item['addons'] ?? [],
+                'unit_price' => $item['unit_price'],
+                'quantity' => $item['quantity'],
+                'subtotal' => $subtotal,
             ]);
-
-            DB::commit();
-
-            return response()->json([
-                'message' => 'Order created successfully',
-                'order' => $order->load('items.coffee'),
-            ], 201);
-        } catch (\Throwable $e) {
-            DB::rollBack();
-
-            return response()->json([
-    'message' => 'Failed to create order',
-], 500);
         }
+
+        $userPromotion = $this->getActiveWelcomePromotionForUser($request->user());
+        $discountAmount = $this->calculatePromotionDiscount($userPromotion, (float) $subtotalPrice);
+        $finalTotal = max(round($subtotalPrice - $discountAmount, 2), 0);
+
+        $order->update([
+            'subtotal_price' => $subtotalPrice,
+            'discount_amount' => $discountAmount,
+            'applied_promo_code' => $discountAmount > 0 && $userPromotion?->promotion
+                ? $userPromotion->promotion->code
+                : null,
+            'total_price' => $finalTotal,
+        ]);
+
+        if ($discountAmount > 0 && $userPromotion) {
+            $userPromotion->update([
+                'used_at' => now(),
+                'order_id' => $order->id,
+            ]);
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'message' => 'Order created successfully',
+            'order' => $order->load('items.coffee'),
+        ], 201);
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        return response()->json([
+            'message' => 'Failed to create order',
+            'error' => $e->getMessage(),
+        ], 500);
     }
-    public function index(Request $request)
+}
+   public function index(Request $request)
 {
     $user = $request->user();
 
     if ($user->role === 'admin') {
-        $orders = Order::with(['items.coffee', 'user'])->latest()->get();
+        $orders = Order::with(['items.coffee', 'user'])
+            ->where('is_archived', false) // 🔥 هذا هو الحل
+            ->latest()
+            ->get();
     } else {
         $orders = Order::with(['items.coffee'])
             ->where('user_id', $user->id)
+            ->where('is_archived', false) // 🔥 نفس الشي user
             ->latest()
             ->get();
     }
@@ -118,6 +141,10 @@ $order->update([
     'completed_at' => $isCompleted ? now() : null,
     'is_archived' => $isCompleted,
 ]);
+
+
+$this->awardLoyaltyPointsIfEligible($order);
+$order->refresh();
 
         if (
     ($order->status === 'out_for_delivery' && $order->mode === 'livraison') ||
@@ -177,14 +204,14 @@ public function cancel(Request $request, $id)
     try {
         $order = Order::findOrFail($id);
 
-        // لازم تكون commande متاع نفس الuser
+        
         if ($order->user_id !== $request->user()->id) {
             return response()->json([
                 'message' => 'Accès interdit',
             ], 403);
         }
 
-        // ينجم يلغّي كان قبل confirmation
+        
         if ($order->status !== 'pending') {
             return response()->json([
                 'message' => 'Cette commande ne peut plus être annulée',
@@ -290,4 +317,112 @@ private function sendSmsNotification($order)
         ]);
     }
 } 
+
+
+
+private function awardLoyaltyPointsIfEligible(Order $order): void
+{
+    if (!$order->user_id) {
+        return;
+    }
+
+    $isEligibleStatus =
+        ($order->mode === 'livraison' && $order->status === 'delivered') ||
+        ($order->mode === 'emporter' && $order->status === 'delivered') ||
+        ($order->mode === 'surplace' && $order->status === 'delivered');
+
+    if (!$isEligibleStatus) {
+        return;
+    }
+
+    if ($order->loyalty_points_awarded_at) {
+        return;
+    }
+
+    $pointsEarned = (int) floor((float) $order->total_price);
+
+    if ($pointsEarned <= 0) {
+        $order->update([
+            'loyalty_points_awarded_at' => now(),
+        ]);
+        return;
+    }
+
+    DB::transaction(function () use ($order, $pointsEarned) {
+        $order->refresh();
+
+        if ($order->loyalty_points_awarded_at) {
+            return;
+        }
+
+        $user = $order->user()->lockForUpdate()->first();
+
+        if (!$user) {
+            return;
+        }
+
+        $user->increment('points', $pointsEarned);
+
+        $order->update([
+            'loyalty_points_awarded_at' => now(),
+        ]);
+    });
+}
+
+
+private function getActiveWelcomePromotionForUser($user)
+{
+    $welcomeCode = config('promotions.welcome.code', 'WELCOME25');
+
+    return $user->userPromotions()
+        ->with('promotion')
+        ->whereHas('promotion', function ($q) use ($welcomeCode) {
+            $q->where('code', $welcomeCode)
+              ->where('is_active', true);
+        })
+        ->whereNull('used_at')
+        ->where(function ($q) {
+            $q->whereNull('expires_at')
+              ->orWhere('expires_at', '>', now());
+        })
+        ->latest()
+        ->first();
+}
+
+
+
+private function calculatePromotionDiscount($userPromotion, float $subtotal): float
+{
+    if (!$userPromotion || !$userPromotion->promotion) {
+        return 0;
+    }
+
+    $promotion = $userPromotion->promotion;
+
+    if (!$promotion->is_active) {
+        return 0;
+    }
+
+    if ($subtotal <= 0) {
+        return 0;
+    }
+
+    $discount = 0;
+
+    if ($promotion->type === 'percentage') {
+        $discount = $subtotal * ((float) $promotion->value / 100);
+    } elseif ($promotion->type === 'fixed') {
+        $discount = (float) $promotion->value;
+    }
+
+    if ($promotion->max_discount !== null) {
+        $discount = min($discount, (float) $promotion->max_discount);
+    }
+
+    $discount = min($discount, $subtotal);
+
+    return round($discount, 2);
+}
+
+
 }

@@ -2,21 +2,21 @@
 
 namespace App\Http\Controllers\Api;
 
+use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
+use App\Models\Order;
 
 class UserController extends Controller
 {
     // ✅ GET /users
-    public function index()
-    {
-        return response()->json(
-            User::select('id', 'name', 'email', 'phone', 'role', 'created_at')
-                ->latest()
-                ->get()
-        );
-    }
+   public function index()
+{
+    return response()->json(
+        User::latest()->get()
+    );
+}
 
     // ✅ POST /users
     public function store(Request $request)
@@ -61,13 +61,39 @@ class UserController extends Controller
         ]);
     }
 
-    public function toggleActive($id)
+
+
+
+
+
+public function toggleActive($id)
 {
     $user = User::findOrFail($id);
 
     $user->active = !$user->active;
     $user->save();
 
-    return response()->json($user);
+    if (!$user->active) {
+        Order::where('user_id', $user->id)
+            ->where('is_archived', false)
+            ->whereIn('status', [
+                'pending',
+                'confirmed',
+                'preparing',
+                'ready',
+                'out_for_delivery',
+            ])
+            ->update([
+                'status' => 'cancelled',
+                'is_archived' => true,
+                'completed_at' => now(),
+                'notes' => DB::raw("CONCAT(COALESCE(notes, ''), ' | Cancelled: user inactive')")
+            ]);
+    }
+
+    return response()->json([
+        'message' => 'User updated',
+        'active' => $user->active
+    ]);
 }
 }

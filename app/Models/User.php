@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
@@ -11,19 +10,14 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 
-
-#[Fillable(['name', 'email', 'phone','role', 'password'])]
+#[Fillable(['name', 'email', 'phone', 'avatar', 'role', 'points', 'password'])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
-    /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
+    protected $appends = ['avatar_url'];
+
     protected function casts(): array
     {
         return [
@@ -31,9 +25,28 @@ class User extends Authenticatable
             'password' => 'hashed',
         ];
     }
-    public function orders()
-{
-    return $this->hasMany(Order::class);
-}
 
+    public function orders()
+    {
+        return $this->hasMany(Order::class);
+    }
+
+    public function rewardRedemptions()
+    {
+        return $this->hasMany(\App\Models\RewardRedemption::class);
+    }
+
+    public function userPromotions()
+    {
+        return $this->hasMany(\App\Models\UserPromotion::class);
+    }
+
+    public function getAvatarUrlAttribute(): ?string
+    {
+        if (!$this->avatar) {
+            return null;
+        }
+
+        return asset('storage/' . $this->avatar);
+    }
 }
